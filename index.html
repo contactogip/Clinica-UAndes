@@ -412,6 +412,9 @@ ol.hechos time{color:var(--muted);font-variant-numeric:tabular-nums;white-space:
 @media (max-width:600px){ol.hechos li{grid-template-columns:1.4rem auto minmax(0,1fr);gap:.5rem}}
 @media print{.pair,.boletas,ol.hechos li{break-inside:avoid}}
 
+/* Avance mensual: dos cifras lado a lado */
+.stats.mes{grid-template-columns:repeat(2,minmax(0,1fr))}
+
 /* Notas de cambio y RDI en revisión o en plazo */
 .est.pend{color:var(--ochre-ink);border:1px solid var(--ochre)}
 /* Término contractual en la línea de hitos */
@@ -423,6 +426,7 @@ ol.hechos time{color:var(--muted);font-variant-numeric:tabular-nums;white-space:
 .bol-cells{flex-wrap:wrap;flex:0 1 auto;max-width:100%}
 /* Etiqueta de referencia cuando el ejecutado está cerca del borde izquierdo */
 .tape-reflab span.lo{transform:translateX(-1.5rem)}
+.stats.mes{grid-template-columns:repeat(2,minmax(0,1fr))}
 h3 .cnt{font-size:var(--fs-xs);font-weight:500;color:var(--muted);margin-left:.4rem}
 /* Documentos anexos */
 ul.anexos{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);max-width:80ch}
@@ -683,12 +687,10 @@ const INFORMES = [
   ],
   /* Semáforo. Reglas, las mismas de las demás obras: avance vs programa (verde ≥ 0 pp, amarillo hasta −2 pp, rojo bajo −2 pp);
      certificado en EEPP vs físico (verde hasta ±2 pp, amarillo hasta ±5 pp, rojo sobre 5 pp);
-     ritmo físico/plazo (verde ≥ 0,95x, amarillo 0,85x a 0,95x, rojo bajo 0,85x);
      cierre de RDI (verde ≥ 90%, amarillo 75% a 90%, rojo bajo 75%); adicionales (verde bajo 3% del contrato). */
   semaforo:[
     { ambito:"Avance físico vs programa", estado:"rojo", lectura:"Ejecutado 26,3% vs programado 28,5% (−2,18 pp, 9 días de atraso)", ir:"avance" },
     { ambito:"Avance certificado en EEPP vs físico", estado:"amarillo", lectura:"Certificado en estados de pago 29,0% vs avance físico 26,3% (+2,71 pp)", ir:"financiero" },
-    { ambito:"Consumo de plazo", estado:"rojo", lectura:"Plazo transcurrido 60,0% con avance físico 26,3% (0,44x). El programa contempla 28,5% a esta fecha (0,47x)", ir:"avance" },
     { ambito:"Hitos contractuales", estado:"amarillo", lectura:"3 de 11 hitos cumplidos, todos en fecha o antes. El hito 4 (término de obra gruesa de la losa cielo del piso 5) vence el 06-11-2026 con la obra 9 días atrasada", ir:"hitos" },
     { ambito:"Vigencia de garantías", estado:"verde", lectura:"Boletas de anticipo (12-07-2027 y 27-08-2027) y póliza (26-07-2027) vigentes después del término, 04-05-2027", ir:"contrato" },
     { ambito:"Obras adicionales", estado:"verde", lectura:"Aprobados UF 12.330,01 con IVA (2,12% del contrato); 8 solicitudes en revisión por UF 2.738,13", ir:"adicionales" },
@@ -721,6 +723,25 @@ const lc = t => t.charAt(0).toLowerCase() + t.slice(1);
 const ESTADO = { verde:"Verde", amarillo:"Amarillo", rojo:"Rojo" };
 const MES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const etiqueta = x => { const [y,m] = x.id.split("-"); return `<strong>N° ${x.numero}</strong> · ${MES[+m-1]} ${y}`; };
+
+/* Avance mensual: lo que falta por ejecutar repartido
+   en los meses que quedan hasta el término, y lo avanzado desde el informe anterior de esta página.
+   En el primer informe publicado de una obra no hay mes anterior y se muestra solo la primera cifra. */
+const diasDelMes = (y,m) => new Date(y, m, 0).getDate();
+const mesesEntre = (a,b) => { const [da,ma,ya] = a.split("-").map(Number), [db,mb,yb] = b.split("-").map(Number); return (yb-ya)*12 + (mb-ma) + (db-da)/diasDelMes(yb,mb); };
+function avanceMensual(R, prev){
+  const meses = mesesEntre(R.cierre, R.proyecto.termino), falta = (1 - R.avance.ejecutado) * 100;
+  return { meses, falta, necesario: falta / meses, prev, ultimoMes: prev ? (R.avance.ejecutado - prev.avance.ejecutado) * 100 : null };
+}
+const textoMensual = R => { const M = R.mes; return `Para terminar en plazo se necesitan ${n(M.necesario,1)} puntos de avance por mes${M.ultimoMes!=null?`; en el último mes se avanzaron ${n(M.ultimoMes,1)}`:""}.`; };
+function bloqueMensual(R){
+  const M = R.mes, lento = M.ultimoMes!=null && M.ultimoMes < M.necesario;
+  return `<h3>Avance mensual</h3>
+    <dl class="stats mes">
+      ${stat("Avance necesario para terminar en plazo", n(M.necesario,1)+" puntos", `Por mes hasta el término (${R.proyecto.termino}); faltan ${n(M.falta,2)}%`)}
+      ${M.ultimoMes!=null?stat("Avance del último mes", n(M.ultimoMes,1)+" puntos", `De ${n(M.prev.avance.ejecutado*100,2)}% a ${n(R.avance.ejecutado*100,2)}% en ${R.periodo.toLowerCase()}`, lento?"neg":"pos"):""}
+    </dl>`;
+}
 const diasTxt = d => d<0 ? `${-d} días de atraso` : d>0 ? `${d} días de adelanto` : "sin desviación en días";
 
 /* Indicadores derivados de los datos base del informe */
@@ -753,8 +774,6 @@ function derivar(R){
   const rdi = R.rdi.pendientesLista.map(p=>({ n:p[0], tema:p[1], esp:p[2], resp:p[3], consulta:p[4], requerida:p[5],
     dias: dias(p[4], R.cierre), vencida: toDate(p[5]) < toDate(R.cierre) }));
   R.d.rdi = rdi; R.d.rdiVencidas = rdi.filter(p=>p.vencida).length;
-  R.d.ritmo = A.ejecutado / R.d.transcurrido;
-  R.d.ritmoProg = A.programado / R.d.transcurrido;
   R.d.brecha = (R.d.certificado - A.ejecutado) * 100;
   return R;
 }
@@ -912,13 +931,13 @@ function vContrato(R){
 function vAvance(R){
   const A = R.avance, D = R.d, M = R.media.misc;
   return sec("avance", head(R,"avance","Avance físico",
-    `Ejecutado ${n(rnd(A.ejecutado*100,2),2)}% contra ${n(rnd(A.programado*100,2),2)}% programado: ${diasTxt(A.dias)}. El ritmo físico respecto del plazo consumido es ${n(D.ritmo,2)}x; el programa contempla ${n(D.ritmoProg,2)}x a esta fecha.`) + `
+    `Ejecutado ${n(rnd(A.ejecutado*100,2),2)}% contra ${n(rnd(A.programado*100,2),2)}% programado: ${diasTxt(A.dias)}. ${textoMensual(R)}`) + `
     <dl class="stats">
       ${stat("Programado a la fecha", n(rnd(A.programado*100,2),2)+"%", "Curva S contractual")}
       ${stat("Ejecutado a la fecha", n(rnd(A.ejecutado*100,2),2)+"%", "Avance real en terreno")}
       ${stat("Desviación", sgn(D.desviacion,2)+" pp", diasTxt(A.dias), D.desviacion<0?"neg":"pos")}
-      ${stat("Ritmo físico / plazo", n(D.ritmo,2)+"x", "Avance ejecutado sobre plazo transcurrido")}
     </dl>
+    ${bloqueMensual(R)}
     <figure class="fig">
       <button type="button" data-lb="curvaS" aria-label="Ampliar curva S de avance físico"><img src="${M.curvaS.src}" alt="Curva S de avance físico del programa oficial, de la semana 30 a la 81. Al ${A.curvaAl} el real es ${pct(A.ejecutado,2)} y el programado ${pct(A.programado,2)}; el avance económico real es ${pct(A.econReal,2)} contra ${pct(A.econProg,2)} programado." decoding="async" loading="lazy" width="${M.curvaS.w}" height="${M.curvaS.h}"></button>
       <figcaption>Curva S de avance físico al ${A.curvaAl}, programa oficial. Azul: % acumulado programado. Rojo: % acumulado real. Morado: tiempo transcurrido. Verde: estado de pago. Líneas segmentadas: avance económico programado y real.</figcaption>
@@ -970,7 +989,6 @@ function vFinanciero(R){
         <tr><td>Anticipo amortizado</td><td class="r">${pct(D.amortizado)}</td><td>Devolución proporcional en cada estado de pago</td></tr>
         <tr><td>Pagado del contrato (EEPP y anticipos)</td><td class="r">${pct(D.pagado,2)}</td><td>IVA incluido</td></tr>
         <tr><td>Plazo transcurrido</td><td class="r">${pct(D.transcurrido)}</td><td>Día ${n(R.plazo.dia)} de ${n(R.proyecto.plazoDias)}</td></tr>
-        <tr><td>Ritmo de avance respecto del plazo</td><td class="r">${n(D.ritmo,2)}x</td><td>Bajo 1,00x el consumo de plazo supera al avance físico</td></tr>
       </tbody>
     </table></div>`);
 }
@@ -1216,6 +1234,7 @@ function lbStep(d){ LB.i = (LB.i + d + LB.list.length) % LB.list.length; lbShow(
    ARRANQUE
    ===================================================================== */
 INFORMES.forEach(derivar);
+INFORMES.forEach((x,i)=>{ x.mes = avanceMensual(x, INFORMES[i+1]); });
 let R = INFORMES[0];
 function render(){
   $("#logo").src = R.media.misc.logo.src;
